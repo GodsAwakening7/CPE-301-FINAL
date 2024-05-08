@@ -1,3 +1,9 @@
+/*
+CPE 301 Final Project - Swamp Cooler
+Jacob Gellman, Blake Smith, Erica Nichols
+Spring 2024
+*/
+
 #include <DHT.h>
 #include <DHT_U.h>
 
