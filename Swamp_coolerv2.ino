@@ -105,3 +105,9 @@ ISR(TIMER1_OVF_vect){
     buttonCounter = true;
   }
 }
+
+void my_delay(unsigned long duration){
+  unsigned long delayThreshold = duration / 4.1;
+  delayCounter = 0;
+  while (delayCounter < delayThreshold) {} // wait until delay finishes
+}
