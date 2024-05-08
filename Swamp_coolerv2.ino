@@ -111,7 +111,105 @@ void my_delay(unsigned long duration){
   delayCounter = 0;
   while (delayCounter < delayThreshold) {} // wait until delay finishes
 }
+void gpio_init()
+{
+  // LEDs are OUTPUT
+  // 7: PH4 (RED), 8: PH5 (YELLOW), 9: PH6 (GREEN), 10: PB4 (BLUE)
+  WRITE_HIGH(*ddr_h, 4); // PH4 ddr HIGH (output)
+  WRITE_HIGH(*ddr_h, 5); // PH5 ddr HIGH (output)
+  WRITE_HIGH(*ddr_h, 6); // PH6 ddr HIGH (output)
+  WRITE_HIGH(*ddr_b, 4); // PB4 ddr HIGH (output)
 
+  // INIT TO OFF
+  WRITE_LOW(*port_h, 4); // RED
+  WRITE_LOW(*port_h, 5); // YELLOW
+  WRITE_LOW(*port_h, 6); // GREEN
+  WRITE_LOW(*port_b, 4); // BLUE
+
+  // BUTTONS are INPUT (pull-up resistor)
+  // BUTTONS - 11: PB5 (), 12: PB6 (), 13: PB7 ()
+  // WRITE_LOW(*ddr_b, 5); // START
+  WRITE_LOW(*ddr_b, 6); // STOP
+  WRITE_LOW(*ddr_b, 7); // RESET
+
+  // INIT PULL UP RESISTOR
+  // WRITE_HIGH(*port_b, 5); // START
+  WRITE_HIGH(*port_b, 6); // STOP
+  WRITE_HIGH(*port_b, 7); // RESET
+
+  // FAN IS OUTPUT
+  // FAN CONTROL - 31: PC6 (IN4), 33: PC4 (IN3), 35: PC2 (ON/OFF/SPEED)
+  WRITE_HIGH(*ddr_c, 6);
+  WRITE_HIGH(*ddr_c, 4);
+  WRITE_HIGH(*ddr_c, 2);
+}
+
+// ISR setup function
+void isr_setup(){
+  pinMode(startButtonPin, INPUT_PULLUP);
+  attachInterrupt(interruptNumber, handleStartPress, FALLING);
+}
+
+// handle start button press
+void handleStartPress(){
+  startButton = true;
+}
+
+// Timer setup function
+void setup_timer_regs()
+{
+  // disable global interrupts
+  cli();
+  // setup the timer control registers
+  *myTCCR1A= 0x00;
+  *myTCCR1B= 0X00;
+  *myTCCR1C= 0x00;
+  
+  // reset the TOV flag
+  *myTIFR1 |= 0x01;
+  
+  // enable the TOV interrupt
+  *myTIMSK1 |= 0x01;
+
+  // start timer
+  *myTCCR1B |= 0x01;
+
+  // enable global interrupts
+  sei();
+}
+
+void rtc_init()
+{
+  Wire.begin();
+  rtc.begin();
+  if (!rtc.isrunning()) {
+    Serial.println("RTC is NOT running!");
+    // Set the RTC to the date and time this sketch was compiled
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+}
+
+void stepper_init()
+{
+  myStepper.setSpeed(15);
+  desiredPos = currentPos; // dont move on startup!
+}
+
+void control_fan(bool on)
+{
+  // FAN CONTROL - 31: PC6 (IN4), 33: PC4 (IN3), 35: PC2 (ENB)
+  // IN3 HIGH, IN4 LOW -> Forward
+  // IN3 LOW, IN4 HIGH -> BACKWARD
+  // ENB HIGH -> ON, LOW -> OFF
+  if (on){
+    WRITE_LOW(*port_c, 6);
+    WRITE_HIGH(*port_c, 4);
+    WRITE_HIGH(*port_c, 2);
+  }
+  else{
+    WRITE_LOW(*port_c, 2);
+  }
+}
 void adc_init()
 {
   // setup the A register
