@@ -1,4 +1,4 @@
-# CPE-301-FINAL
+# CPE-301-FINAL - Swamp-Cooler
 Group jeb_
 
 Jacob Gellman 
