@@ -256,3 +256,25 @@ unsigned int adc_read(unsigned char adc_channel_num)
   // return the result in the ADC data register
   return *my_ADC_DATA;
 }
+
+void U0init(int U0baud) 
+{
+  unsigned long FCPU = 16000000;
+unsigned int tbaud; 
+tbaud = (FCPU / (16 * U0baud)) - 1;
+*myUCSR0A = 0x20;
+*myUCSR0B = 0x18;
+*myUCSR0C = 0x06;
+*myUBRR0 = tbaud;
+}
+
+unsigned char U0getchar() 
+{
+  return *myUDR0;
+}
+
+void U0putchar(unsigned char U0pdata) 
+{
+  while((*myUCSR0A & TBE) ==0);
+    *myUDR0 = U0pdata;
+}
