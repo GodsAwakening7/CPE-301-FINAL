@@ -117,6 +117,221 @@ void my_delay(unsigned long duration){
   delayCounter = 0;
   while (delayCounter < delayThreshold) {} // wait until delay finishes
 }
+
+class State {
+public:
+    virtual void enter() = 0; // Called when entering the state
+    virtual void update() = 0; // Called in the main loop when in this state
+    virtual void exit() = 0;  // Called when exiting the state
+};
+
+State* state;
+int currentState; // for debugging 
+int newState; // int for holding a number representing the next state to switch to
+// 0 : stay same
+// 1 : RUNNING
+// 2 : idle
+// 3 : disabled
+// 4 : error
+
+// sensor data
+unsigned int temp_humid;
+unsigned int water_level;
+static const unsigned water_threshold = 700; // TEST VALUES
+static const unsigned temp_humid_threshold = 900; // TEST VALUES
+unsigned int potPos;
+unsigned int desiredPos;
+unsigned int currentPos;
+void moveToPosition();
+void control_fan(bool);
+
+class RUNNING : public State {
+  void enter() override {
+    // LEDS
+    WRITE_LOW(*port_h, 4);
+    WRITE_LOW(*port_h, 5);
+    WRITE_LOW(*port_h, 6);
+    WRITE_HIGH(*port_b, 4); // BLUE
+    displayData = true;
+    currentState = 1;
+    control_fan(true);
+  }
+  void update() override {
+    // stepper motor
+    moveToPosition();
+    if (stopButton){ // stop button
+      newState = 3;
+    }
+    else if (temp_humid >= temp_humid_threshold){ // check temp thresh
+      newState = 2;
+    }
+    else if (water_level < water_threshold){ // check water thresh
+      newState = 4;
+    }
+    
+  }
+  void exit() override {
+    // LEDS
+    WRITE_LOW(*port_b, 4);
+    control_fan(false);
+  }
+};
+
+class IDLE : public State {
+  void enter() override {
+    // LEDS
+    WRITE_LOW(*port_h, 4);
+    WRITE_LOW(*port_h, 5);
+    WRITE_HIGH(*port_h, 6); // GREEN
+    WRITE_LOW(*port_b, 4);
+    displayData = true;
+    currentState = 2;
+  }
+  void update() override {
+    // stepper motor
+    moveToPosition();
+    if (stopButton){ // check stop button
+      newState = 3;
+    }
+    else if (water_level < water_threshold){ // check water thresh
+      newState = 4;
+    }
+    else if (temp_humid < temp_humid_threshold){ // check temp thresh
+      newState = 1;
+    }
+  }
+  void exit() override {
+    // LEDS
+    WRITE_LOW(*port_h, 6);
+  }
+};
+
+class DISABLED : public State {
+  void enter() override {
+    // LEDS
+    WRITE_LOW(*port_h, 4);
+    WRITE_HIGH(*port_h, 5); // YELLOW
+    WRITE_LOW(*port_h, 6);
+    WRITE_LOW(*port_b, 4);
+    displayData = false;
+    lcd.clear();
+    currentState = 3;
+  }
+  void update() override {
+    // stepper motor 
+    moveToPosition();
+    if (startButton){ // start button
+      newState = 1;
+    }
+  }
+  void exit() override {
+    WRITE_LOW(*port_h, 5);
+    readData = true;
+  }
+};
+
+class ERROR : public State {
+  void enter() override {
+    // LEDS
+    WRITE_HIGH(*port_h, 4); // RED
+    WRITE_LOW(*port_h, 5);
+    WRITE_LOW(*port_h, 6);
+    WRITE_LOW(*port_b, 4);
+    displayData = true;
+    currentState = 4;
+  }
+  void update() override {
+    if (stopButton){
+      newState = 3; // DISABLED
+    }
+    if (resetButton){
+      newState = 2; // IDLE
+    }
+  }
+  void exit() override {
+    WRITE_LOW(*port_h, 4);
+    readData = true;
+  }
+};
+
+// Create state instances
+RUNNING runningState; // 1
+IDLE idleState; // 2
+DISABLED disabledState; // 3
+ERROR errorState; // 4
+
+void setup()
+{
+    U0init(9600); // SERIAL IO
+    adc_init(); // ADC
+    lcd.begin(16, 2); // LCD
+    gpio_init(); // GPIO (LEDS and Buttons)
+    isr_setup(); // ISR 
+    setup_timer_regs(); // TIMER
+    stepper_init(); // STEPPER
+    rtc_init(); // RTC
+    state = &disabledState; // STATE, start in disabled mode
+    state->enter(); 
+}
+
+void loop() 
+{
+  // READ STUFF
+  if (readData || overflowCounter >= overflowsPerMinute){
+   // Read from the first sensor connected to A0 (channel 0)
+    temp_humid = adc_read(0);
+
+    // Read from the second sensor connected to A1 (channel 1)
+    water_level = adc_read(1);
+    readData = false;
+  }
+
+  // Read potentiometer output connected to A2 for vent
+  potPos = adc_read(2);
+  desiredPos = map(potPos, 0, 1048, 0, stepsPerRevolution);
+
+  // DISPLAY STATE
+  if (displayData = true){
+    display(water_level, temp_humid);
+  }
+
+  // BUTTONS
+  // reset flags
+  // start button var automatically updated by ISR
+  if (readButtons || buttonCounter >= overflowsPer500ms){
+    stopButton = PIN_READ(*pin_b, 6);
+    resetButton = PIN_READ(*pin_b, 7);   
+    readButtons = false;
+  }
+
+  // Datetime
+  now = rtc.now();
+
+  // UPDATE STATE
+  state->update();
+
+  // DEBUGGING
+  // Serial.print("Current State: ");
+  // Serial.println(currentState);
+  // Serial.print("Next State: ");
+  // Serial.println(newState);
+  // Serial.print("Start: ");
+  // Serial.println(startButton);
+  // Serial.print("Reset: ");
+  // Serial.println(resetButton);
+  // Serial.print("Stop: ");
+  // Serial.println(stopButton);
+  // Serial.print("DateTime: ");
+  // Serial.println(date_time_to_str(now));
+  // Serial.println();
+
+  // change state
+  changeState();
+
+  // delay
+  my_delay(50); // delay for 50 milliseconds overall
+}
+
 void gpio_init()
 {
   // LEDs are OUTPUT
@@ -216,6 +431,7 @@ void control_fan(bool on)
     WRITE_LOW(*port_c, 2);
   }
 }
+
 void adc_init()
 {
   // setup the A register
@@ -257,24 +473,117 @@ unsigned int adc_read(unsigned char adc_channel_num)
   return *my_ADC_DATA;
 }
 
-void U0init(int U0baud) 
+void U0init(int U0baud)
 {
-  unsigned long FCPU = 16000000;
-unsigned int tbaud; 
-tbaud = (FCPU / (16 * U0baud)) - 1;
-*myUCSR0A = 0x20;
-*myUCSR0B = 0x18;
-*myUCSR0C = 0x06;
-*myUBRR0 = tbaud;
+ unsigned long FCPU = 16000000;
+ unsigned int tbaud;
+ tbaud = (FCPU / 16 / U0baud - 1);
+ // Same as (FCPU / (16 * U0baud)) - 1;
+ *myUCSR0A = 0x20;
+ *myUCSR0B = 0x18;
+ *myUCSR0C = 0x06;
+ *myUBRR0  = tbaud;
 }
 
-unsigned char U0getchar() 
+unsigned char U0getchar()
 {
   return *myUDR0;
 }
 
-void U0putchar(unsigned char U0pdata) 
+void U0putchar(unsigned char U0pdata)
 {
-  while((*myUCSR0A & TBE) ==0);
-    *myUDR0 = U0pdata;
+  while((*myUCSR0A & TBE)==0);
+  *myUDR0 = U0pdata;
+}
+
+void display(int water_level, int temp_humid){
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Water: ");
+  lcd.print(water_level);
+  lcd.setCursor(0, 1);
+  lcd.print("T/H: ");
+  lcd.print(temp_humid);
+}
+
+void changeState(){
+  // change state based on newState int
+  if (newState == 0){
+    // do nothing!
+  }
+  else if (newState == 1){
+    state->exit();
+    state = &runningState;
+    // report to UART!
+    state_change_report();
+  }
+  else if (newState == 2){
+    state->exit();
+    state = &idleState;
+    // report to UART!
+    state_change_report();
+  }
+  else if (newState == 3){
+    state->exit();
+    state = &disabledState;
+    // report to UART!
+    state_change_report();
+  }
+  else if (newState == 4){
+    state->exit();
+    state = &errorState;
+    // report to UART!
+    state_change_report();
+  }
+
+  // enter the state!
+  state->enter();
+
+  newState = 0;
+
+  // reset flags after state change
+  startButton = false;
+  stopButton = false;
+  resetButton = false;
+}
+
+void moveToPosition(){
+  int sensitivity = 100;
+  if (currentPos < desiredPos - sensitivity || currentPos > desiredPos + sensitivity){ // only change if significant difference
+    stepper_report(); // report to UART !
+  }
+  int stepsToMove = desiredPos - currentPos;
+  myStepper.step(stepsToMove);
+  currentPos = desiredPos;
+}
+
+
+void stepper_report(){
+  String prefix = "STEPPER NEW POS: " + String(desiredPos);
+  String datetime = date_time_to_str(now);
+  String report = create_report(prefix, datetime);
+  serial_report(report);
+}
+
+void state_change_report(){
+  char* mapping[5] = {"NA", "RUNNING", "IDLE", "DISABLED", "ERROR"};
+  String curState = mapping[currentState];
+  String nextState = mapping[newState];
+  String prefix = "STATE CHANGE FROM " + curState + " TO " + nextState;
+  String datetime = date_time_to_str(now);
+  String report = create_report(prefix, datetime);
+  serial_report(report);
+}
+
+String create_report(String prefix, String datetime){
+  String report = prefix + " ||| " + datetime;
+  return report;
+}
+
+void serial_report(String report)
+{
+  for (int i = 0; i < report.length(); i++){
+    U0putchar(report[i]);
+  }
+  U0putchar('\n');
 }
